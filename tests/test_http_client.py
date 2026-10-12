@@ -1,5 +1,5 @@
+import base64
 import httpx
-
 from app.exceptions import (
     AuthenticationError,
     NetworkError,
@@ -14,11 +14,9 @@ from app.retry_policy import RetryPolicy
 
 def mock_handler(request: httpx.Request) -> httpx.Response:
     """Simulate a successful API response."""
-
     assert request.method == "GET"
     assert request.url.scheme == "https"
     assert request.url.params["keywords"] == "cloud engineer"
-
     return httpx.Response(
         status_code=200,
         json={
@@ -35,7 +33,6 @@ def mock_handler(request: httpx.Request) -> httpx.Response:
 
 def test_successful_get_json() -> None:
     """Verify HTTPS GET requests and JSON decoding."""
-
     with HTTPClient(
         transport=httpx.MockTransport(mock_handler),
     ) as client:
@@ -43,16 +40,13 @@ def test_successful_get_json() -> None:
             "https://example.com/api/jobs",
             params={"keywords": "cloud engineer"},
         )
-
     assert data["results"][0]["id"] == "123"
     assert data["results"][0]["title"] == "Cloud Engineer"
-
     print("PASS: HTTPS GET request and JSON decoding")
 
 
 def test_unauthorized_response() -> None:
     """Verify that an HTTP 401 response raises an error."""
-
     def unauthorized_handler(
         request: httpx.Request,
     ) -> httpx.Response:
@@ -60,7 +54,6 @@ def test_unauthorized_response() -> None:
             status_code=401,
             json={"error": "Unauthorized"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(unauthorized_handler),
     ) as client:
@@ -74,13 +67,11 @@ def test_unauthorized_response() -> None:
             raise AssertionError(
                 "Expected AuthenticationError for HTTP 401"
             )
-
     print("PASS: HTTP 401 (Unauthorized) raises AuthenticationError")
 
 
 def test_forbidden_response() -> None:
     """Verify that HTTP 403 raises AuthenticationError."""
-
     def forbidden_handler(
         request: httpx.Request,
     ) -> httpx.Response:
@@ -88,7 +79,6 @@ def test_forbidden_response() -> None:
             status_code=403,
             json={"error": "Forbidden"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(forbidden_handler),
     ) as client:
@@ -102,13 +92,11 @@ def test_forbidden_response() -> None:
             raise AssertionError(
                 "Expected AuthenticationError for HTTP 403"
             )
-
     print("PASS: HTTP 403 (Forbidden) raises AuthenticationError")
 
 
 def test_not_found_response() -> None:
     """Verify that HTTP 404 raises the general HTTP error."""
-
     def not_found_handler(
         request: httpx.Request,
     ) -> httpx.Response:
@@ -116,7 +104,6 @@ def test_not_found_response() -> None:
             status_code=404,
             json={"error": "Not Found"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(not_found_handler),
     ) as client:
@@ -131,13 +118,11 @@ def test_not_found_response() -> None:
             raise AssertionError(
                 "Expected JobSearchHTTPError for HTTP 404"
             )
-
     print("PASS: HTTP 404 (Not Found) raises JobSearchHTTPError")
 
 
 def test_network_timeout() -> None:
     """Verify that a timeout raises NetworkError."""
-
     def timeout_handler(
         request: httpx.Request,
     ) -> httpx.Response:
@@ -145,7 +130,6 @@ def test_network_timeout() -> None:
             "Simulated API read timeout",
             request=request,
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(timeout_handler),
         retry_policy=RetryPolicy(max_attempts=1),
@@ -158,13 +142,11 @@ def test_network_timeout() -> None:
             raise AssertionError(
                 "Expected NetworkError for a read timeout"
             )
-
     print("PASS: Network timeout raises NetworkError")
 
 
 def test_internal_server_error() -> None:
     """Verify that an HTTP 500 response raises an error."""
-
     def server_error_handler(
         request: httpx.Request,
     ) -> httpx.Response:
@@ -172,7 +154,6 @@ def test_internal_server_error() -> None:
             status_code=500,
             json={"error": "Internal Server Error"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(server_error_handler),
         retry_policy=RetryPolicy(max_attempts=1),
@@ -187,33 +168,27 @@ def test_internal_server_error() -> None:
             raise AssertionError(
                 "Expected ServerError for HTTP 500"
             )
-
     print("PASS: HTTP 500 raises ServerError")
 
 
 def test_retry_recovers_after_server_errors() -> None:
     """Verify two HTTP 503 failures recover on the third attempt."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def recovery_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         if request_count <= 2:
             return httpx.Response(
                 status_code=503,
                 json={"error": "Service Unavailable"},
             )
-
         return httpx.Response(
             status_code=200,
             json={"jobs": [{"id": 123, "title": "Cloud Engineer"}]},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(recovery_handler),
         retry_policy=RetryPolicy(
@@ -225,33 +200,27 @@ def test_retry_recovers_after_server_errors() -> None:
         result = client.get_json(
             "https://example.com/api/jobs"
         )
-
     assert request_count == 3
     assert sleep_delays == [1.0, 2.0]
     assert result == {
         "jobs": [{"id": 123, "title": "Cloud Engineer"}]
     }
-
     print("PASS: HTTP 503 retries recover on third attempt")
 
 
 def test_retry_exhaustion() -> None:
     """Verify retries stop after the maximum attempts."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def unavailable_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         return httpx.Response(
             status_code=503,
             json={"error": "Service Unavailable"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(unavailable_handler),
         retry_policy=RetryPolicy(
@@ -273,31 +242,25 @@ def test_retry_exhaustion() -> None:
             raise AssertionError(
                 "Expected ServerError after retry exhaustion"
             )
-
     assert request_count == 4
     assert sleep_delays == [1.0, 2.0, 4.0]
-
     print("PASS: Retry exhaustion stops after four attempts")
 
 
 def test_network_timeout_recovery() -> None:
     """Verify the client recovers after two read timeouts."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def recovery_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         if request_count <= 2:
             raise httpx.ReadTimeout(
                 "Simulated temporary read timeout",
                 request=request,
             )
-
         return httpx.Response(
             status_code=200,
             json={
@@ -306,7 +269,6 @@ def test_network_timeout_recovery() -> None:
                 ]
             },
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(recovery_handler),
         retry_policy=RetryPolicy(
@@ -318,7 +280,6 @@ def test_network_timeout_recovery() -> None:
         result = client.get_json(
             "https://example.com/api/jobs"
         )
-
     assert request_count == 3
     assert sleep_delays == [1.0, 2.0]
     assert result == {
@@ -326,27 +287,22 @@ def test_network_timeout_recovery() -> None:
             {"id": 456, "title": "Platform Engineer"}
         ]
     }
-
     print("PASS: Network timeout recovers on third attempt")
 
 
 def test_network_retry_exhaustion() -> None:
     """Verify network retries stop after maximum attempts."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def timeout_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         raise httpx.ReadTimeout(
             "Simulated persistent read timeout",
             request=request,
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(timeout_handler),
         retry_policy=RetryPolicy(
@@ -366,30 +322,24 @@ def test_network_retry_exhaustion() -> None:
             raise AssertionError(
                 "Expected NetworkError after retry exhaustion"
             )
-
     assert request_count == 4
     assert sleep_delays == [1.0, 2.0, 4.0]
-
     print("PASS: Network retries stop after four timeouts")
 
 
 def test_connect_error_does_not_retry() -> None:
     """Verify ambiguous connection failures stop immediately."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def connection_error_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         raise httpx.ConnectError(
             "Simulated TLS certificate verification failure",
             request=request,
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(connection_error_handler),
         retry_policy=RetryPolicy(
@@ -409,71 +359,87 @@ def test_connect_error_does_not_retry() -> None:
             raise AssertionError(
                 "Expected NetworkError for connection failure"
             )
-
     assert request_count == 1
     assert sleep_delays == []
-
     print("PASS: ConnectError does not trigger retries")
 
 
 def test_authentication_failure_does_not_retry() -> None:
-    """Verify authentication failures stop after one request."""
-
-    request_count = 0
-    sleep_delays: list[float] = []
-
-    def unauthorized_handler(
-        request: httpx.Request,
-    ) -> httpx.Response:
-        nonlocal request_count
-        request_count += 1
-
-        return httpx.Response(
-            status_code=401,
-            json={"error": "Unauthorized"},
-        )
-
-    with HTTPClient(
-        transport=httpx.MockTransport(unauthorized_handler),
-        retry_policy=RetryPolicy(
-            max_attempts=4,
-            jitter_max=0.0,
-        ),
-        sleep=sleep_delays.append,
-    ) as client:
-        try:
-            client.get_json("https://example.com/api/jobs")
-        except AuthenticationError as exc:
-            assert "HTTP 401" in str(exc)
-        else:
-            raise AssertionError(
-                "Expected AuthenticationError for HTTP 401"
+    """Verify HTTP 401/403 authentication failures are not retried."""
+    for status_code in (401, 403):
+        request_count = 0
+        sleep_delays: list[float] = []
+        def auth_failure_handler(
+            request: httpx.Request,
+        ) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(
+                status_code=status_code,
+                json={"error": "Authentication failed"},
             )
+        with HTTPClient(
+            transport=httpx.MockTransport(auth_failure_handler),
+            retry_policy=RetryPolicy(
+                max_attempts=4,
+                jitter_max=0.0,
+            ),
+            sleep=sleep_delays.append,
+        ) as client:
+            try:
+                client.get_json("https://example.com/api/jobs")
+            except AuthenticationError as exc:
+                assert f"HTTP {status_code}" in str(exc)
+            else:
+                raise AssertionError(
+                    f"Expected AuthenticationError for HTTP {status_code}"
+                )
+        assert request_count == 1
+        assert sleep_delays == []
+    print("PASS: Authentication failures do not trigger retries")
 
-    assert request_count == 1
-    assert sleep_delays == []
 
-    print("PASS: Authentication failure does not retry")
+def test_basic_authentication() -> None:
+    """Verify HTTP Basic authentication is passed to the transport."""
+    def auth_handler(request: httpx.Request) -> httpx.Response:
+        expected_credentials = base64.b64encode(
+            b"dummy-reed-key:"
+        ).decode("ascii")
+        assert request.headers["Authorization"] == (
+            f"Basic {expected_credentials}"
+        )
+        return httpx.Response(
+            status_code=200,
+            json={"results": []},
+        )
+    with HTTPClient(
+        transport=httpx.MockTransport(auth_handler),
+    ) as client:
+        result = client.get_json(
+            "https://example.com/api/jobs",
+            auth=httpx.BasicAuth(
+                username="dummy-reed-key",
+                password="",
+            ),
+        )
+    assert result == {"results": []}
+    print("PASS: HTTP Basic authentication supported")
 
 
 def test_rate_limit_response() -> None:
     """Verify excessive Retry-After raises RateLimitError immediately."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def rate_limit_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         return httpx.Response(
             status_code=429,
             headers={"Retry-After": "300"},
             json={"error": "Too Many Requests"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(rate_limit_handler),
         retry_policy=RetryPolicy(
@@ -494,36 +460,30 @@ def test_rate_limit_response() -> None:
             raise AssertionError(
                 "Expected RateLimitError for excessive Retry-After"
             )
-
     assert request_count == 1
     assert sleep_delays == []
-
     print("PASS: Excessive Retry-After rejected without retry")
+
 
 def test_rate_limit_retry_after_recovery() -> None:
     """Verify HTTP 429 recovers after the Retry-After delay."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def rate_limit_recovery_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         if request_count == 1:
             return httpx.Response(
                 status_code=429,
                 headers={"Retry-After": "5"},
                 json={"error": "Too Many Requests"},
             )
-
         return httpx.Response(
             status_code=200,
             json={"jobs": [{"id": 789}]},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(
             rate_limit_recovery_handler
@@ -537,37 +497,30 @@ def test_rate_limit_retry_after_recovery() -> None:
         result = client.get_json(
             "https://example.com/api/jobs"
         )
-
     assert request_count == 2
     assert sleep_delays == [5.0]
     assert result == {"jobs": [{"id": 789}]}
-
     print("PASS: HTTP 429 recovers after Retry-After delay")
 
 
 def test_rate_limit_missing_retry_after() -> None:
     """Verify HTTP 429 without Retry-After uses exponential backoff."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def rate_limit_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         if request_count <= 2:
             return httpx.Response(
                 status_code=429,
                 json={"error": "Too Many Requests"},
             )
-
         return httpx.Response(
             status_code=200,
             json={"jobs": [{"id": 999}]},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(rate_limit_handler),
         retry_policy=RetryPolicy(
@@ -579,32 +532,26 @@ def test_rate_limit_missing_retry_after() -> None:
         result = client.get_json(
             "https://example.com/api/jobs"
         )
-
     assert request_count == 3
     assert sleep_delays == [1.0, 2.0]
     assert result == {"jobs": [{"id": 999}]}
-
     print("PASS: HTTP 429 without Retry-After uses backoff")
 
 
 def test_rate_limit_retry_exhaustion() -> None:
     """Verify persistent HTTP 429 stops after maximum attempts."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def rate_limit_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         return httpx.Response(
             status_code=429,
             headers={"Retry-After": "2"},
             json={"error": "Too Many Requests"},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(rate_limit_handler),
         retry_policy=RetryPolicy(
@@ -623,37 +570,30 @@ def test_rate_limit_retry_exhaustion() -> None:
             raise AssertionError(
                 "Expected RateLimitError after retry exhaustion"
             )
-
     assert request_count == 4
     assert sleep_delays == [2.0, 2.0, 2.0]
-
     print("PASS: HTTP 429 retries stop after four attempts")
 
 
 def test_rate_limit_invalid_retry_after() -> None:
     """Verify malformed Retry-After falls back to exponential backoff."""
-
     request_count = 0
     sleep_delays: list[float] = []
-
     def rate_limit_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         if request_count == 1:
             return httpx.Response(
                 status_code=429,
                 headers={"Retry-After": "invalid"},
                 json={"error": "Too Many Requests"},
             )
-
         return httpx.Response(
             status_code=200,
             json={"jobs": [{"id": 1001}]},
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(rate_limit_handler),
         retry_policy=RetryPolicy(
@@ -665,49 +605,39 @@ def test_rate_limit_invalid_retry_after() -> None:
         result = client.get_json(
             "https://example.com/api/jobs"
         )
-
     assert request_count == 2
     assert sleep_delays == [1.0]
     assert result == {"jobs": [{"id": 1001}]}
-
     print("PASS: Invalid Retry-After uses exponential backoff")
 
 
 def test_rate_limit_http_date_retry_after() -> None:
     """Verify HTTP-date Retry-After is honoured by the HTTP client."""
-
     from datetime import datetime, timedelta, timezone
     from email.utils import format_datetime
     from unittest.mock import patch
-
     request_count = 0
     sleep_delays: list[float] = []
-
     fixed_now = datetime(2026, 10, 12, 10, 0, tzinfo=timezone.utc)
     retry_date = fixed_now + timedelta(seconds=10)
     retry_header = format_datetime(retry_date, usegmt=True)
-
     def rate_limit_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         nonlocal request_count
         request_count += 1
-
         if request_count == 1:
             return httpx.Response(
                 status_code=429,
                 headers={"Retry-After": retry_header},
                 json={"error": "Too Many Requests"},
             )
-
         return httpx.Response(
             status_code=200,
             json={"jobs": [{"id": 1002}]},
         )
-
     with patch("app.retry_after.datetime") as mock_datetime:
         mock_datetime.now.return_value = fixed_now
-
         with HTTPClient(
             transport=httpx.MockTransport(rate_limit_handler),
             retry_policy=RetryPolicy(
@@ -719,17 +649,14 @@ def test_rate_limit_http_date_retry_after() -> None:
             result = client.get_json(
                 "https://example.com/api/jobs"
             )
-
     assert request_count == 2
     assert sleep_delays == [10.0]
     assert result == {"jobs": [{"id": 1002}]}
-
     print("PASS: HTTP-date Retry-After honoured by HTTP client")
 
 
 def test_invalid_json_response() -> None:
     """Verify that malformed JSON raises a decoding error."""
-
     def invalid_json_handler(
         request: httpx.Request,
     ) -> httpx.Response:
@@ -737,7 +664,6 @@ def test_invalid_json_response() -> None:
             status_code=200,
             text="This is not valid JSON!",
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(invalid_json_handler),
     ) as client:
@@ -749,20 +675,17 @@ def test_invalid_json_response() -> None:
             raise AssertionError(
                 "Expected ResponseFormatError for invalid JSON"
             )
-
     print("PASS: Invalid JSON raises ResponseFormatError")
 
 
 def test_reject_insecure_http() -> None:
     """Verify that HTTP URLs are rejected before any request."""
-
     def unexpected_request_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         raise AssertionError(
             "Network transport must not be called for HTTP URLs"
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(unexpected_request_handler),
     ) as client:
@@ -774,20 +697,17 @@ def test_reject_insecure_http() -> None:
             raise AssertionError(
                 "Expected ValueError for an insecure HTTP URL"
             )
-
     print("PASS: Insecure HTTP URL rejected")
 
 
 def test_reject_missing_hostname() -> None:
     """Verify HTTPS URLs without a hostname are rejected."""
-
     def unexpected_request_handler(
         request: httpx.Request,
     ) -> httpx.Response:
         raise AssertionError(
             "Network transport must not be called for invalid URLs"
         )
-
     with HTTPClient(
         transport=httpx.MockTransport(unexpected_request_handler),
     ) as client:
@@ -802,7 +722,6 @@ def test_reject_missing_hostname() -> None:
             raise AssertionError(
                 "Expected ValueError for URL without hostname"
             )
-
     print("PASS: HTTPS URL without hostname rejected")
 
 
@@ -819,6 +738,7 @@ if __name__ == "__main__":
     test_network_retry_exhaustion()
     test_connect_error_does_not_retry()
     test_authentication_failure_does_not_retry()
+    test_basic_authentication()
 
     # HTTP 429 rate-limit handling
     test_rate_limit_response()
