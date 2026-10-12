@@ -457,19 +457,31 @@ def test_authentication_failure_does_not_retry() -> None:
 
 
 def test_rate_limit_response() -> None:
-    """Verify that HTTP 429 raises RateLimitError."""
+    """Verify excessive Retry-After raises RateLimitError immediately."""
+
+    request_count = 0
+    sleep_delays: list[float] = []
 
     def rate_limit_handler(
         request: httpx.Request,
     ) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+
         return httpx.Response(
             status_code=429,
-            headers={"Retry-After": "30"},
+            headers={"Retry-After": "300"},
             json={"error": "Too Many Requests"},
         )
 
     with HTTPClient(
         transport=httpx.MockTransport(rate_limit_handler),
+        retry_policy=RetryPolicy(
+            max_attempts=4,
+            jitter_max=0.0,
+            max_retry_after=60.0,
+        ),
+        sleep=sleep_delays.append,
     ) as client:
         try:
             client.get_json("https://example.com/api/jobs")
@@ -477,13 +489,242 @@ def test_rate_limit_response() -> None:
             assert "HTTP 429" in str(exc)
             assert isinstance(exc.__cause__, httpx.HTTPStatusError)
             assert exc.__cause__.response.status_code == 429
-            assert exc.__cause__.response.headers["Retry-After"] == "30"
+            assert exc.__cause__.response.headers["Retry-After"] == "300"
         else:
             raise AssertionError(
-                "Expected RateLimitError for HTTP 429"
+                "Expected RateLimitError for excessive Retry-After"
             )
 
-    print("PASS: HTTP 429 raises RateLimitError")
+    assert request_count == 1
+    assert sleep_delays == []
+
+    print("PASS: Excessive Retry-After rejected without retry")
+
+def test_rate_limit_retry_after_recovery() -> None:
+    """Verify HTTP 429 recovers after the Retry-After delay."""
+
+    request_count = 0
+    sleep_delays: list[float] = []
+
+    def rate_limit_recovery_handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+
+        if request_count == 1:
+            return httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "5"},
+                json={"error": "Too Many Requests"},
+            )
+
+        return httpx.Response(
+            status_code=200,
+            json={"jobs": [{"id": 789}]},
+        )
+
+    with HTTPClient(
+        transport=httpx.MockTransport(
+            rate_limit_recovery_handler
+        ),
+        retry_policy=RetryPolicy(
+            max_attempts=4,
+            jitter_max=0.0,
+        ),
+        sleep=sleep_delays.append,
+    ) as client:
+        result = client.get_json(
+            "https://example.com/api/jobs"
+        )
+
+    assert request_count == 2
+    assert sleep_delays == [5.0]
+    assert result == {"jobs": [{"id": 789}]}
+
+    print("PASS: HTTP 429 recovers after Retry-After delay")
+
+
+def test_rate_limit_missing_retry_after() -> None:
+    """Verify HTTP 429 without Retry-After uses exponential backoff."""
+
+    request_count = 0
+    sleep_delays: list[float] = []
+
+    def rate_limit_handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+
+        if request_count <= 2:
+            return httpx.Response(
+                status_code=429,
+                json={"error": "Too Many Requests"},
+            )
+
+        return httpx.Response(
+            status_code=200,
+            json={"jobs": [{"id": 999}]},
+        )
+
+    with HTTPClient(
+        transport=httpx.MockTransport(rate_limit_handler),
+        retry_policy=RetryPolicy(
+            max_attempts=4,
+            jitter_max=0.0,
+        ),
+        sleep=sleep_delays.append,
+    ) as client:
+        result = client.get_json(
+            "https://example.com/api/jobs"
+        )
+
+    assert request_count == 3
+    assert sleep_delays == [1.0, 2.0]
+    assert result == {"jobs": [{"id": 999}]}
+
+    print("PASS: HTTP 429 without Retry-After uses backoff")
+
+
+def test_rate_limit_retry_exhaustion() -> None:
+    """Verify persistent HTTP 429 stops after maximum attempts."""
+
+    request_count = 0
+    sleep_delays: list[float] = []
+
+    def rate_limit_handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+
+        return httpx.Response(
+            status_code=429,
+            headers={"Retry-After": "2"},
+            json={"error": "Too Many Requests"},
+        )
+
+    with HTTPClient(
+        transport=httpx.MockTransport(rate_limit_handler),
+        retry_policy=RetryPolicy(
+            max_attempts=4,
+            jitter_max=0.0,
+        ),
+        sleep=sleep_delays.append,
+    ) as client:
+        try:
+            client.get_json("https://example.com/api/jobs")
+        except RateLimitError as exc:
+            assert "HTTP 429" in str(exc)
+            assert isinstance(exc.__cause__, httpx.HTTPStatusError)
+            assert exc.__cause__.response.status_code == 429
+        else:
+            raise AssertionError(
+                "Expected RateLimitError after retry exhaustion"
+            )
+
+    assert request_count == 4
+    assert sleep_delays == [2.0, 2.0, 2.0]
+
+    print("PASS: HTTP 429 retries stop after four attempts")
+
+
+def test_rate_limit_invalid_retry_after() -> None:
+    """Verify malformed Retry-After falls back to exponential backoff."""
+
+    request_count = 0
+    sleep_delays: list[float] = []
+
+    def rate_limit_handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+
+        if request_count == 1:
+            return httpx.Response(
+                status_code=429,
+                headers={"Retry-After": "invalid"},
+                json={"error": "Too Many Requests"},
+            )
+
+        return httpx.Response(
+            status_code=200,
+            json={"jobs": [{"id": 1001}]},
+        )
+
+    with HTTPClient(
+        transport=httpx.MockTransport(rate_limit_handler),
+        retry_policy=RetryPolicy(
+            max_attempts=4,
+            jitter_max=0.0,
+        ),
+        sleep=sleep_delays.append,
+    ) as client:
+        result = client.get_json(
+            "https://example.com/api/jobs"
+        )
+
+    assert request_count == 2
+    assert sleep_delays == [1.0]
+    assert result == {"jobs": [{"id": 1001}]}
+
+    print("PASS: Invalid Retry-After uses exponential backoff")
+
+
+def test_rate_limit_http_date_retry_after() -> None:
+    """Verify HTTP-date Retry-After is honoured by the HTTP client."""
+
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+    from unittest.mock import patch
+
+    request_count = 0
+    sleep_delays: list[float] = []
+
+    fixed_now = datetime(2026, 10, 12, 10, 0, tzinfo=timezone.utc)
+    retry_date = fixed_now + timedelta(seconds=10)
+    retry_header = format_datetime(retry_date, usegmt=True)
+
+    def rate_limit_handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+
+        if request_count == 1:
+            return httpx.Response(
+                status_code=429,
+                headers={"Retry-After": retry_header},
+                json={"error": "Too Many Requests"},
+            )
+
+        return httpx.Response(
+            status_code=200,
+            json={"jobs": [{"id": 1002}]},
+        )
+
+    with patch("app.retry_after.datetime") as mock_datetime:
+        mock_datetime.now.return_value = fixed_now
+
+        with HTTPClient(
+            transport=httpx.MockTransport(rate_limit_handler),
+            retry_policy=RetryPolicy(
+                max_attempts=4,
+                jitter_max=0.0,
+            ),
+            sleep=sleep_delays.append,
+        ) as client:
+            result = client.get_json(
+                "https://example.com/api/jobs"
+            )
+
+    assert request_count == 2
+    assert sleep_delays == [10.0]
+    assert result == {"jobs": [{"id": 1002}]}
+
+    print("PASS: HTTP-date Retry-After honoured by HTTP client")
 
 
 def test_invalid_json_response() -> None:
@@ -578,7 +819,16 @@ if __name__ == "__main__":
     test_network_retry_exhaustion()
     test_connect_error_does_not_retry()
     test_authentication_failure_does_not_retry()
+
+    # HTTP 429 rate-limit handling
+    test_rate_limit_response()
+    test_rate_limit_retry_after_recovery()
+    test_rate_limit_missing_retry_after()
+    test_rate_limit_retry_exhaustion()
+    test_rate_limit_invalid_retry_after()
+    test_rate_limit_http_date_retry_after()
+
+    # Response validation and URL security
     test_invalid_json_response()
     test_reject_insecure_http()
     test_reject_missing_hostname()
-    test_rate_limit_response()

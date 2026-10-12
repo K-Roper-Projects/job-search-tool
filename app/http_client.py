@@ -14,6 +14,7 @@ from app.exceptions import (
     ServerError,
 )
 
+from app.retry_after import parse_retry_after
 from app.retry_policy import RetryPolicy
 
 
@@ -120,6 +121,22 @@ class HTTPClient:
                     ) from exc
 
                 if status_code == 429:
+                    retry_after = parse_retry_after(
+                        exc.response.headers.get("Retry-After", "")
+                    )
+
+                    if attempt < self._retry_policy.max_attempts:
+                        if retry_after is None:
+                            delay = self._retry_policy.delay_with_jitter(
+                                attempt
+                            )
+                        else:
+                            delay = retry_after
+
+                        if delay <= self._retry_policy.max_retry_after:
+                            self._sleep(delay)
+                            continue
+
                     raise RateLimitError(
                         "API rate limit exceeded: HTTP 429"
                     ) from exc

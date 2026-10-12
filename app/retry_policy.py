@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import math
 import random
 
 
@@ -12,6 +13,7 @@ class RetryPolicy:
     backoff_multiplier: float = 2.0
     max_delay: float = 8.0
     jitter_max: float = 0.25
+    max_retry_after: float = 60.0
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -37,6 +39,14 @@ class RetryPolicy:
         if self.jitter_max < 0:
             raise ValueError(
                 "jitter_max cannot be negative"
+            )
+
+        if (
+            not math.isfinite(self.max_retry_after)
+            or self.max_retry_after < 0
+        ):
+            raise ValueError(
+                "max_retry_after must be finite and non-negative"
             )
 
 

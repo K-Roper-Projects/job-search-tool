@@ -109,6 +109,34 @@ def test_random_jitter_bounds() -> None:
     print("PASS: Random jitter remains within bounds")
 
 
+def test_max_retry_after_validation() -> None:
+    """Verify Retry-After limit rejects invalid values."""
+
+    policy = RetryPolicy(max_retry_after=60.0)
+    assert policy.max_retry_after == 60.0
+
+    try:
+        RetryPolicy(max_retry_after=-1.0)
+    except ValueError as exc:
+        assert "max_retry_after" in str(exc)
+    else:
+        raise AssertionError(
+            "Expected ValueError for negative max_retry_after"
+        )
+
+    for invalid_value in (float("inf"), float("nan")):
+        try:
+            RetryPolicy(max_retry_after=invalid_value)
+        except ValueError as exc:
+            assert "max_retry_after" in str(exc)
+        else:
+            raise AssertionError(
+                "Expected ValueError for non-finite max_retry_after"
+            )
+
+    print("PASS: Retry-After limit validation")
+
+
 if __name__ == "__main__":
     test_default_configuration()
     test_invalid_max_attempts()
@@ -117,3 +145,4 @@ if __name__ == "__main__":
     test_fixed_jitter()
     test_invalid_jitter()
     test_random_jitter_bounds()
+    test_max_retry_after_validation()
